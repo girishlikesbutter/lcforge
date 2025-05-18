@@ -48,3 +48,5 @@ Thumbs.db
 # Pyenv
 .python-version
 
+# Large Files
+spice/kernels/generic/spk/de440.bsp
