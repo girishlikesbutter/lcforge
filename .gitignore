@@ -49,4 +49,4 @@ Thumbs.db
 .python-version
 
 # Large Files
-spice/kernels/generic/spk/de440.bsp
+data/spice_kernels/generic/spk/de440.bsp
