@@ -9,4 +9,3 @@ FRAME_-999824_CENTER      = -126824
 CK_-999824_SCLK           = -126824
 CK_-999824_SPK            = -126824
 \begintext
-

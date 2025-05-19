@@ -14,12 +14,12 @@ TEST_ET = 6.34169191e+08
 EXPECTED_UTC_FROM_TEST_ET = "2020-02-05T10:05:21.815116"  # From your previous successful log
 
 IS901_NAIF_ID_STR = "-126824"
-OBSERVER_DST_NAIF_ID_STR = "399999"
+OBSERVER_DST_NAIF_ID_STR = "399999"  # Example, ensure covered by kernels if tested
 EARTH_NAIF_ID_STR = "399"
 INERTIAL_FRAME_NAME = "J2000"
 
 USER_IS901_BUS_FRAME_NAME_STR = "IS901_BUS_FRAME"
-USER_IS901_BUS_FRAME_ID_INT = -999824
+USER_IS901_BUS_FRAME_ID_INT = -999824  # This is the ID resolved by namfrm
 
 # Expected position for IS901 from your log (use for np.allclose)
 EXPECTED_IS901_POS = np.array([-30460.03777213, 29576.62061818, 900.06049665])
@@ -43,7 +43,7 @@ def project_root_dir():
 @pytest.fixture(scope="session")
 def metakernel_path(project_root_dir):
     """Returns the absolute path to the metakernel."""
-    return os.path.join(
+    path = os.path.join(
         project_root_dir,
         "data",
         "spice_kernels",
@@ -51,32 +51,44 @@ def metakernel_path(project_root_dir):
         "dst-is901",
         "INTELSAT_901-metakernel.tm"
     )
+    if not os.path.exists(path):
+        pytest.fail(f"Metakernel not found at {path}. Ensure the path is correct relative to the test file.")
+    return path
 
 
 @pytest.fixture
 def spice_handler_loaded(metakernel_path):
     """
     Provides a SpiceHandler instance with the metakernel loaded.
-    Ensures kernels are cleared after the test.
+    Ensures kernels are cleared after the test using its __exit__ method.
     """
-    handler = SpiceHandler()
-    try:
+    # Using the context manager feature of SpiceHandler
+    with SpiceHandler() as handler:
         handler.load_metakernel(metakernel_path)
-        yield handler  # Provide the handler to the test
-    finally:
-        handler.unload_all_kernels()  # Ensure cleanup
+        yield handler
+    # Kernels are automatically unloaded by __exit__
 
 
 # --- Test Functions ---
 
 def test_metakernel_loading(spice_handler_loaded):
     """Tests if the metakernel and its constituent kernels are loaded."""
-    assert spice_handler_loaded._loaded_kernels  # Check if the set is not empty
-    # Check if the metakernel itself is in the loaded set
-    # Note: metakernel_path fixture returns absolute path, SpiceHandler stores what was passed.
-    # For this test, we're more interested that *something* got loaded.
-    # A more robust check would be to query ktotal.
-    assert spiceypy.ktotal('ALL') > 0  # Check if SPICE has kernels loaded
+    assert spice_handler_loaded._loaded_kernels  # Check if the internal set is not empty
+    # Check if SPICE toolkit reports kernels loaded
+    # ktotal('ALL') counts all types of kernels.
+    # For text kernels like FK, LSK, SCLK, ktotal('text') can be used.
+    # For binary kernels SPK, CK, PCK, EK, DSK, ktotal('binary') can be used.
+    assert spiceypy.ktotal('ALL') > 0
+
+
+def test_context_manager(metakernel_path):
+    """Tests the context manager ensures kernels are loaded and then cleared."""
+    assert spiceypy.ktotal('ALL') == 0  # Should be 0 before context
+    with SpiceHandler() as sh:
+        sh.load_metakernel(metakernel_path)
+        assert spiceypy.ktotal('ALL') > 0  # Should be > 0 inside context after loading
+    # After exiting context, ktotal should be 0 due to unload_all_kernels in __exit__
+    assert spiceypy.ktotal('ALL') == 0
 
 
 def test_et_to_utc_conversion(spice_handler_loaded):
@@ -87,9 +99,8 @@ def test_et_to_utc_conversion(spice_handler_loaded):
 
 def test_utc_to_et_conversion(spice_handler_loaded):
     """Tests UTC to ET conversion."""
-    # Use the UTC string we know corresponds to TEST_ET
     et = spice_handler_loaded.utc_to_et(EXPECTED_UTC_FROM_TEST_ET)
-    np.testing.assert_allclose(et, TEST_ET, rtol=1e-7)  # Compare floats carefully
+    np.testing.assert_allclose(et, TEST_ET, rtol=1e-7)
 
 
 def test_get_is901_position(spice_handler_loaded):
@@ -106,14 +117,12 @@ def test_get_is901_position(spice_handler_loaded):
 
 def test_get_is901_bus_orientation(spice_handler_loaded):
     """Tests retrieving IS901_BUS_FRAME orientation."""
-    # First, ensure the frame name is known
     try:
         frame_id = spice_handler_loaded.get_frame_id_from_name(USER_IS901_BUS_FRAME_NAME_STR)
         assert frame_id == USER_IS901_BUS_FRAME_ID_INT
     except ValueError:
         pytest.fail(f"Frame name '{USER_IS901_BUS_FRAME_NAME_STR}' not found by get_frame_id_from_name.")
 
-    # Then, get the orientation
     rot_matrix = spice_handler_loaded.get_target_orientation(
         from_frame=INERTIAL_FRAME_NAME,
         to_frame=USER_IS901_BUS_FRAME_NAME_STR,
@@ -124,41 +133,34 @@ def test_get_is901_bus_orientation(spice_handler_loaded):
 
 def test_get_frame_id_and_name_mapping(spice_handler_loaded):
     """Tests frame name to ID and ID to name mappings."""
-    # Test name to ID
     resolved_id = spice_handler_loaded.get_frame_id_from_name(USER_IS901_BUS_FRAME_NAME_STR)
     assert resolved_id == USER_IS901_BUS_FRAME_ID_INT
 
-    # Test ID to name
     resolved_name = spice_handler_loaded.get_frame_name_from_id(USER_IS901_BUS_FRAME_ID_INT)
-    # Note: frmnam might return a slightly different canonical name than defined in FK,
-    # but it should be consistent. For user-defined frames, it should match.
-    # The previous log showed frinfo(-999824) returned '-126824' as name.
-    # Let's check what frmnam returns for the ID.
-    # If your FK defines IS901_BUS_FRAME for -999824, frmnam should return IS901_BUS_FRAME.
     assert resolved_name == USER_IS901_BUS_FRAME_NAME_STR
 
 
 def test_get_frame_info_by_id(spice_handler_loaded):
-    """Tests retrieving frame information by ID."""
+    """
+    Tests retrieving frame information by ID,
+    reflecting the current SpiceHandler.get_frame_info_by_id behavior.
+    """
+    # USER_IS901_BUS_FRAME_ID_INT is -999824
+    # spice_handler.get_frame_info_by_id will:
+    # 1. Call spiceypy.frmnam(-999824) -> should return 'IS901_BUS_FRAME'
+    # 2. Call spiceypy.frinfo(-999824) -> your log showed it returns (-126824, 3, -999824)
+    #    This corresponds to (center, frclass, clssid_int)
+
     frname, center, frclass, frclss_id_list = spice_handler_loaded.get_frame_info_by_id(USER_IS901_BUS_FRAME_ID_INT)
 
-    # Based on your log: frinfo(-999824) returned (-126824, 3, -999824)
-    # This means:
-    # frname = '-126824' (the S/C ID, which is unusual but what SPICE returns for this ID's "name" via frinfo)
-    # center = 3 (Class of frame, e.g., CK-based)
-    # frclass = -999824 (Class ID, often the frame ID itself for CK frames of type 3)
+    assert frname == USER_IS901_BUS_FRAME_NAME_STR  # From frmnam
+    assert center == int(IS901_NAIF_ID_STR)  # -126824, from the first element of frinfo's 3-tuple
+    assert frclass == 3  # From the second element of frinfo's 3-tuple
 
-    assert frname == str(
-        IS901_NAIF_ID_STR)  # Or check against the S/C ID if that's what frinfo consistently returns as name
-    # More robustly, check if the ID resolved by namfrm(USER_IS901_BUS_FRAME_NAME_STR) is what we expect
-    assert spiceypy.namfrm(USER_IS901_BUS_FRAME_NAME_STR) == USER_IS901_BUS_FRAME_ID_INT
+    # frclss_id_list is derived from clssid_int (-999824), the third element from frinfo's 3-tuple
+    assert frclss_id_list == [USER_IS901_BUS_FRAME_ID_INT]
 
-    # We can also check the center and class if those are known and stable for this frame.
-    # For example, if IS901_BUS_FRAME is a CK frame (type 3), then frclass should be 3.
-    # The 'center' from frinfo is the NAIF ID of the object at the center of the frame.
-    # The 'class ID' from frinfo is often the frame ID itself for CK frames.
-    # Example checks (these might need adjustment based on your FK definition):
-    # assert center == int(IS901_NAIF_ID_STR) # If the frame is centered on the spacecraft
-    assert frclass == 3  # Common for CK frames
-    assert frclss_id_list == []  # As frinfo returned 3 items, this should be empty
-
+# Consider adding more tests for:
+# - Unloading individual kernels (SpiceHandler.unload_kernel)
+# - Error handling (e.g., requesting data for unloaded kernels or invalid IDs)
+# - Loading a kernel that doesn't exist (should raise an error)
