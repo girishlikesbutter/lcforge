@@ -5,22 +5,123 @@ import numpy as np
 from typing import Union, List, Tuple, Set
 import logging
 import os
-from spiceypy.utils.support_types import SPICEINT_CELL  # Import for integer IDs
+import re  # For parsing
+from spiceypy.utils.support_types import SPICEINT_CELL
 
 
-# SpiceHandler class definition
 class SpiceHandler:
-    """
-    A class to handle SPICE operations, including kernel management,
-    time conversions, and ephemeris data retrieval.
-    """
-
     def __init__(self):
         self._loaded_kernels: Set[str] = set()
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.logger.info("SpiceHandler instance initialized.")
 
-    def load_kernel(self, kernel_path: Union[str, List[str]]):
+    def _parse_text_kernel_list(self, line_content: str) -> List[str]:
+        """Helper to parse a SPICE list like ('item1', 'item2', ...)."""
+        items = []
+        # Remove parentheses and split by comma, then strip quotes and whitespace
+        content_inside_parens = line_content.strip()[1:-1]  # Remove ( and )
+
+        # Regex to find quoted strings, handling potential spaces around commas
+        # This is more robust than simple split by comma if paths have spaces (though unlikely for SPICE)
+        for item_match in re.finditer(r"'([^']*)'", content_inside_parens):
+            items.append(item_match.group(1).strip())
+        return items
+
+    def load_metakernel_programmatically(self, metakernel_path: str):
+        """
+        Reads a metakernel, resolves paths relative to the metakernel's location,
+        and furnishes each kernel individually.
+        """
+        self.logger.info(f"Programmatically loading metakernel: {metakernel_path}")
+        metakernel_dir = os.path.dirname(os.path.abspath(metakernel_path))
+
+        path_values_map = {}
+        kernels_to_load_raw = []
+
+        try:
+            with open(metakernel_path, 'r') as mk_file:
+                reading_paths = False
+                reading_symbols = False
+                reading_kernels = False
+
+                for line in mk_file:
+                    line_stripped = line.strip()
+                    if not line_stripped or line_stripped.startswith('\\begintext') or line_stripped.startswith(
+                            '\\begindata'):
+                        continue
+
+                    if 'PATH_VALUES' in line_stripped:
+                        pv_line = line_stripped.split('=')[1].strip()
+                        path_values_list = self._parse_text_kernel_list(pv_line)
+                        reading_paths = True  # Assuming single line for simplicity now
+                    elif 'PATH_SYMBOLS' in line_stripped and reading_paths:
+                        ps_line = line_stripped.split('=')[1].strip()
+                        path_symbols_list = self._parse_text_kernel_list(ps_line)
+                        if len(path_values_list) == len(path_symbols_list):
+                            for i, sym in enumerate(path_symbols_list):
+                                # Resolve path in PATH_VALUES relative to metakernel_dir
+                                resolved_pv_path = os.path.normpath(os.path.join(metakernel_dir, path_values_list[i]))
+                                path_values_map[f"${sym}"] = resolved_pv_path  # Store with $ prefix
+                        else:
+                            self.logger.error("Mismatch between PATH_VALUES and PATH_SYMBOLS count.")
+                        reading_paths = False
+                        reading_symbols = True
+                    elif 'KERNELS_TO_LOAD' in line_stripped:
+                        ktl_line = line_stripped.split('=')[1].strip()
+                        kernels_to_load_raw = self._parse_text_kernel_list(ktl_line)
+                        reading_kernels = True  # Assuming single line for simplicity
+                        break  # Assuming KERNELS_TO_LOAD is the last relevant part for this parser
+
+            self.logger.debug(f"Parsed PATH_VALUES_MAP: {path_values_map}")
+            self.logger.debug(f"Parsed KERNELS_TO_LOAD_RAW: {kernels_to_load_raw}")
+
+            # Resolve and furnish kernels
+            for kernel_entry in kernels_to_load_raw:
+                resolved_kernel_path = kernel_entry
+                # Substitute path symbols
+                for symbol, path_prefix in path_values_map.items():
+                    if kernel_entry.startswith(symbol):
+                        resolved_kernel_path = kernel_entry.replace(symbol, path_prefix)
+                        break  # Symbol found and replaced
+
+                # If no symbol was found, and it's a relative path, assume it's relative to metakernel_dir
+                if not os.path.isabs(resolved_kernel_path) and not any(
+                        kernel_entry.startswith(s) for s in path_values_map.keys()):
+                    resolved_kernel_path = os.path.normpath(os.path.join(metakernel_dir, kernel_entry))
+
+                self.logger.info(f"Attempting to furnish individual kernel: {resolved_kernel_path}")
+                self.load_kernel(resolved_kernel_path)  # Use existing load_kernel method
+
+            # Add the metakernel itself to the list of "loaded" kernels for tracking,
+            # even though its content was processed programmatically.
+            if metakernel_path not in self._loaded_kernels:
+                self._loaded_kernels.add(metakernel_path)
+            self.logger.info(f"Finished programmatic processing of metakernel: {metakernel_path}")
+
+        except Exception as e:
+            self.logger.error(f"Error programmatically parsing or loading metakernel {metakernel_path}: {e}")
+            raise
+
+    # Keep original load_metakernel for now, or replace its call sites
+    def load_metakernel(self, metakernel_path: str):
+        # Option 1: Call the new programmatic loader
+        self.load_metakernel_programmatically(metakernel_path)
+
+        # Option 2: Keep the old direct furnsh for comparison if needed, but programmatic is preferred now
+        # if metakernel_path not in self._loaded_kernels:
+        #     try:
+        #         spiceypy.furnsh(metakernel_path)
+        #         self._loaded_kernels.add(metakernel_path)
+        #         self.logger.info(f"Loaded SPICE metakernel (direct furnsh): {metakernel_path}")
+        #     except spiceypy.utils.exceptions.SpiceyError as e:
+        #         self.logger.error(f"SPICE error loading metakernel (direct furnsh) {metakernel_path}: {e}")
+        #         raise
+        # else:
+        #     self.logger.debug(f"Metakernel already loaded, skipping: {metakernel_path}")
+
+    # ... (all other methods: load_kernel, unload_kernel, unload_all_kernels, utc_to_et, et_to_utc, etc. remain THE SAME)
+    def load_kernel(self, kernel_path: Union[
+        str, List[str]]):  # Duplicated for completeness, ensure it's only once in actual file
         if isinstance(kernel_path, str):
             kernel_paths_to_load = [kernel_path]
         elif isinstance(kernel_path, list):
@@ -32,7 +133,7 @@ class SpiceHandler:
         for path in kernel_paths_to_load:
             if path not in self._loaded_kernels:
                 try:
-                    spiceypy.furnsh(path)
+                    spiceypy.furnsh(path)  # Individual kernels are furnished directly
                     self._loaded_kernels.add(path)
                     self.logger.info(f"Loaded SPICE kernel: {path}")
                 except spiceypy.utils.exceptions.SpiceyError as e:
@@ -40,18 +141,6 @@ class SpiceHandler:
                     raise
             else:
                 self.logger.debug(f"Kernel already loaded, skipping: {path}")
-
-    def load_metakernel(self, metakernel_path: str):
-        if metakernel_path not in self._loaded_kernels:
-            try:
-                spiceypy.furnsh(metakernel_path)
-                self._loaded_kernels.add(metakernel_path)
-                self.logger.info(f"Loaded SPICE metakernel: {metakernel_path}")
-            except spiceypy.utils.exceptions.SpiceyError as e:
-                self.logger.error(f"SPICE error loading metakernel {metakernel_path}: {e}")
-                raise
-        else:
-            self.logger.debug(f"Metakernel already loaded, skipping: {metakernel_path}")
 
     def unload_kernel(self, kernel_path: str):
         if kernel_path in self._loaded_kernels:
@@ -119,7 +208,6 @@ class SpiceHandler:
             raise
 
     def get_frame_name_from_id(self, frame_id: int) -> str:
-        """Gets the frame name associated with a given frame ID."""
         try:
             frame_name = spiceypy.frmnam(frame_id)
             if not frame_name:
@@ -131,7 +219,6 @@ class SpiceHandler:
             raise ValueError(f"Could not get frame name for ID {frame_id} due to SPICE error.") from e
 
     def get_frame_id_from_name(self, frame_name: str) -> int:
-        """Gets the frame ID associated with a given frame name."""
         try:
             frame_id = spiceypy.namfrm(frame_name)
             if frame_id == 0:
@@ -143,45 +230,26 @@ class SpiceHandler:
             raise ValueError(f"Could not get frame ID for name '{frame_name}' due to SPICE error.") from e
 
     def get_frame_info_by_id(self, frame_id: int) -> Tuple[str, int, int, List[int]]:
-        """Retrieves frame information using its integer ID."""
         try:
             self.logger.debug(f"Calling spiceypy.frinfo with ID: {frame_id}")
             raw_frinfo_result = spiceypy.frinfo(frame_id)
-
             self.logger.debug(f"Raw result from spiceypy.frinfo({frame_id}): {raw_frinfo_result}")
-            self.logger.debug(
-                f"Type of raw_frinfo_result: {type(raw_frinfo_result)}, Length: {len(raw_frinfo_result) if isinstance(raw_frinfo_result, tuple) else 'N/A'}")
-
             frclss_id_list = []
-            frname = ""
-            center = 0
-            frclass = 0
-
+            frname, center, frclass = "", 0, 0
             if isinstance(raw_frinfo_result, tuple):
                 if len(raw_frinfo_result) == 4:
                     frname, center, frclass, frclss_id_cell = raw_frinfo_result
                     if isinstance(frclss_id_cell, spiceypy.utils.support_types.SpiceCell):
                         frclss_id_list = [frclss_id_cell[i] for i in range(spiceypy.card(frclss_id_cell))]
-                    else:
-                        self.logger.warning(
-                            f"frclss_id_cell from frinfo (for ID {frame_id}) is not a SpiceCell, it's a {type(frclss_id_cell)}. Value: {frclss_id_cell}. Treating ClassID as empty.")
                 elif len(raw_frinfo_result) == 3:
                     frname, center, frclass = raw_frinfo_result
-                    self.logger.warning(
-                        f"spiceypy.frinfo({frame_id}) returned 3 items. Name='{frname}', Center={center}, Class={frclass}. Assuming no ClassID is defined for this frame.")
                 else:
-                    err_msg = f"spiceypy.frinfo({frame_id}) returned an unexpected number of items ({len(raw_frinfo_result)}). Expected 3 or 4. Result: {raw_frinfo_result}"
-                    self.logger.error(err_msg)
-                    raise ValueError(err_msg)
+                    raise ValueError(f"frinfo returned unexpected items: {len(raw_frinfo_result)}")
             else:
-                err_msg = f"spiceypy.frinfo({frame_id}) did not return a tuple. Result: {raw_frinfo_result}"
-                self.logger.error(err_msg)
-                raise ValueError(err_msg)
-
+                raise ValueError(f"frinfo did not return tuple: {raw_frinfo_result}")
             self.logger.debug(
                 f"Frame Info for ID {frame_id}: Name='{frname}', Center={center}, Class={frclass}, ClassIDList={frclss_id_list}")
             return frname, center, frclass, frclss_id_list
-
         except spiceypy.utils.exceptions.SpiceyError as e:
             self.logger.error(f"SPICE error getting frame info for ID {frame_id}: {e}")
             raise
@@ -195,38 +263,36 @@ class SpiceHandler:
         self.logger.debug("SpiceHandler context exited, all kernels unloaded.")
 
 
-# --- Main execution block for testing ---
+# --- Main execution block for testing (can be kept for direct script testing) ---
 if __name__ == '__main__':
+    # ... (The __main__ block from the previous version can remain largely the same,
+    #      as it calls sh.load_metakernel(), which now uses the programmatic loader)
     if not logging.getLogger().hasHandlers():
         logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     main_logger = logging.getLogger(f"{__name__}.__main__")
-    main_logger.info("Running SpiceHandler example with mission kernels.")
+    main_logger.info("Running SpiceHandler example with programmatic metakernel loading.")
 
     current_script_path = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_script_path, '..', '..'))
     data_dir = os.path.join(project_root, "data", "spice_kernels")
-
     is901_metakernel_path = os.path.join(data_dir, "missions", "dst-is901", "INTELSAT_901-metakernel.tm")
 
-    # --- NAIF IDs and Frame Info based on user input ---
     IS901_NAIF_ID_STR = "-126824"
     OBSERVER_DST_NAIF_ID_STR = "399999"
-
     USER_IS901_BUS_FRAME_NAME_STR = "IS901_BUS_FRAME"
     USER_IS901_BUS_FRAME_ID_INT = -999824
-    # --- End of user-provided values ---
-
     TARGET_ET_FOR_TEST = 6.34169191e+08
-
     EARTH_NAIF_ID_STR = "399"
     INERTIAL_FRAME_NAME = "J2000"
 
     try:
         with SpiceHandler() as sh:
+            # This now calls load_metakernel_programmatically
             sh.load_metakernel(is901_metakernel_path)
-            main_logger.info(f"Successfully furnished metakernel: {is901_metakernel_path}")
+            main_logger.info(f"Programmatic processing of metakernel completed: {is901_metakernel_path}")
 
+            # Rest of the tests from the previous __main__ block...
             test_utc_time_str_from_et = "UNKNOWN_UTC"
             try:
                 test_utc_time_str_from_et = sh.et_to_utc(TARGET_ET_FOR_TEST, precision=6)
@@ -255,29 +321,22 @@ if __name__ == '__main__':
             except Exception as e:
                 main_logger.error(f"SPICE error getting DST Observer position: {e}")
 
-            # --- Frame and Orientation Test ---
             main_logger.info(
                 f"--- Testing IS901 Orientation (Frame Name: '{USER_IS901_BUS_FRAME_NAME_STR}', Expected ID: {USER_IS901_BUS_FRAME_ID_INT}) ---")
             try:
-                # Step 1: Verify the frame name maps to the expected ID
                 resolved_id_from_name = sh.get_frame_id_from_name(USER_IS901_BUS_FRAME_NAME_STR)
                 if resolved_id_from_name == USER_IS901_BUS_FRAME_ID_INT:
                     main_logger.info(
                         f"Confirmed: Name '{USER_IS901_BUS_FRAME_NAME_STR}' maps to ID {USER_IS901_BUS_FRAME_ID_INT} via namfrm.")
                 else:
-                    # This case should ideally not happen if FK is correct and USER_IS901_BUS_FRAME_NAME_STR is the defined name for USER_IS901_BUS_FRAME_ID_INT
                     main_logger.error(
-                        f"CRITICAL MISMATCH: Name '{USER_IS901_BUS_FRAME_NAME_STR}' maps to {resolved_id_from_name}, but expected ID was {USER_IS901_BUS_FRAME_ID_INT}. Check FK definition or script constants.")
+                        f"CRITICAL MISMATCH: Name '{USER_IS901_BUS_FRAME_NAME_STR}' maps to {resolved_id_from_name}, but expected ID was {USER_IS901_BUS_FRAME_ID_INT}.")
 
-                # Step 2: Get frame info using the known ID (for logging/verification)
-                # This also serves as a check that the frame ID is known to frinfo
                 frname_info, center_info, frclass_info, frclss_id_list_info = sh.get_frame_info_by_id(
                     USER_IS901_BUS_FRAME_ID_INT)
                 main_logger.info(
                     f"Info for Frame ID {USER_IS901_BUS_FRAME_ID_INT}: Official Name (from frinfo)='{frname_info}', Center={center_info}, Class={frclass_info}, ClassID={frclss_id_list_info}")
 
-                # Step 3: Attempt orientation using the user-provided frame name (USER_IS901_BUS_FRAME_NAME_STR)
-                # We trust this name because we've confirmed it maps to the correct ID via namfrm.
                 main_logger.info(
                     f"Attempting to get orientation for frame '{USER_IS901_BUS_FRAME_NAME_STR}' relative to '{INERTIAL_FRAME_NAME}'")
                 rot_matrix = sh.get_target_orientation(
@@ -292,12 +351,9 @@ if __name__ == '__main__':
                     f"SPICE error during frame processing or orientation for '{USER_IS901_BUS_FRAME_NAME_STR}' (ID: {USER_IS901_BUS_FRAME_ID_INT}): {e}")
 
         main_logger.info("Exited SpiceHandler context. Kernels unloaded.")
-        # Removed the utc2et call that was here to verify unload, as requested by user.
         main_logger.info("Kernel unload verification step (previously here) has been removed.")
-
 
     except FileNotFoundError as e:
         main_logger.error(f"CRITICAL FILE NOT FOUND during setup: {e}.")
     except Exception as e:
         main_logger.exception(f"An unexpected error occurred: {e}")
-
