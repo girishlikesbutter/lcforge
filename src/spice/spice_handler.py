@@ -1,14 +1,14 @@
-# lcforge/spice/spice_handler.py
+# lcforge/src/spice/spice_handler.py
 
 import spiceypy
 import numpy as np
 from typing import Union, List, Tuple, Set
 import logging
+import os
+from spiceypy.utils.support_types import SPICEINT_CELL  # Import for integer IDs
 
-# Get a logger for this module
-logger = logging.getLogger(__name__)
 
-
+# SpiceHandler class definition
 class SpiceHandler:
     """
     A class to handle SPICE operations, including kernel management,
@@ -16,339 +16,288 @@ class SpiceHandler:
     """
 
     def __init__(self):
-        """
-        Initializes the SpiceHandler.
-        Keeps track of loaded kernels to prevent redundant loading
-        and to facilitate unloading.
-        """
         self._loaded_kernels: Set[str] = set()
-        logger.info("SpiceHandler initialized.")
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        self.logger.info("SpiceHandler instance initialized.")
 
     def load_kernel(self, kernel_path: Union[str, List[str]]):
-        """
-        Loads one or more SPICE kernels.
-
-        Args:
-            kernel_path: A string path to a single kernel file or a list of paths.
-
-        Raises:
-            spiceypy.utils.exceptions.SpiceyError: If SPICE encounters an error.
-            FileNotFoundError: If a kernel file is not found.
-        """
         if isinstance(kernel_path, str):
             kernel_paths_to_load = [kernel_path]
         elif isinstance(kernel_path, list):
             kernel_paths_to_load = kernel_path
         else:
             msg = "kernel_path must be a string or a list of strings."
-            logger.error(msg)
+            self.logger.error(msg)
             raise TypeError(msg)
-
         for path in kernel_paths_to_load:
             if path not in self._loaded_kernels:
                 try:
                     spiceypy.furnsh(path)
                     self._loaded_kernels.add(path)
-                    logger.info(f"Loaded SPICE kernel: {path}")
+                    self.logger.info(f"Loaded SPICE kernel: {path}")
                 except spiceypy.utils.exceptions.SpiceyError as e:
-                    logger.error(f"SPICE error loading kernel {path}: {e}")
-                    raise
-                except FileNotFoundError as e:  # This might be caught by SPICE, but good to be explicit
-                    logger.error(f"Kernel file not found: {path}: {e}")
+                    self.logger.error(f"SPICE error loading kernel {path}: {e}")
                     raise
             else:
-                logger.debug(f"Kernel already loaded, skipping: {path}")
+                self.logger.debug(f"Kernel already loaded, skipping: {path}")
 
     def load_metakernel(self, metakernel_path: str):
-        """
-        Loads a SPICE metakernel (which itself lists other kernels to load).
-        The metakernel path itself is also tracked.
-
-        Args:
-            metakernel_path: Path to the metakernel file (.tm).
-
-        Raises:
-            spiceypy.utils.exceptions.SpiceyError: If SPICE encounters an error.
-            FileNotFoundError: If the metakernel file is not found.
-        """
-        # Metakernels are loaded via furnsh, just like individual kernels.
-        # We treat the metakernel itself as a kernel we've "loaded" for tracking.
         if metakernel_path not in self._loaded_kernels:
             try:
                 spiceypy.furnsh(metakernel_path)
-                self._loaded_kernels.add(metakernel_path)  # Track the metakernel itself
-                logger.info(f"Loaded SPICE metakernel: {metakernel_path}")
+                self._loaded_kernels.add(metakernel_path)
+                self.logger.info(f"Loaded SPICE metakernel: {metakernel_path}")
             except spiceypy.utils.exceptions.SpiceyError as e:
-                logger.error(f"SPICE error loading metakernel {metakernel_path}: {e}")
-                raise
-            except FileNotFoundError as e:
-                logger.error(f"Metakernel file not found: {metakernel_path}: {e}")
+                self.logger.error(f"SPICE error loading metakernel {metakernel_path}: {e}")
                 raise
         else:
-            logger.debug(f"Metakernel already loaded, skipping: {metakernel_path}")
+            self.logger.debug(f"Metakernel already loaded, skipping: {metakernel_path}")
 
     def unload_kernel(self, kernel_path: str):
-        """
-        Unloads a specific SPICE kernel.
-
-        Args:
-            kernel_path: Path to the kernel file to unload.
-
-        Raises:
-            spiceypy.utils.exceptions.SpiceyError: If SPICE encounters an error.
-        """
         if kernel_path in self._loaded_kernels:
             try:
                 spiceypy.unload(kernel_path)
                 self._loaded_kernels.remove(kernel_path)
-                logger.info(f"Unloaded SPICE kernel: {kernel_path}")
+                self.logger.info(f"Unloaded SPICE kernel: {kernel_path}")
             except spiceypy.utils.exceptions.SpiceyError as e:
-                logger.error(f"SPICE error unloading kernel {kernel_path}: {e}")
+                self.logger.error(f"SPICE error unloading kernel {kernel_path}: {e}")
                 raise
         else:
-            logger.warning(f"Attempted to unload kernel not in loaded set: {kernel_path}")
+            self.logger.warning(f"Attempted to unload kernel not in loaded set: {kernel_path}")
 
     def unload_all_kernels(self):
-        """
-        Unloads all SPICE kernels that were loaded through this handler
-        and then clears the SPICE kernel pool using kclear.
-        This is the most robust way to ensure a clean SPICE state.
-        """
-        # Unload individually tracked kernels first (optional, as kclear is comprehensive)
-        # for k in list(self._loaded_kernels): # Iterate over a copy
-        #     try:
-        #         spiceypy.unload(k)
-        #         logger.debug(f"Individually unloaded {k} before kclear.")
-        #     except spiceypy.utils.exceptions.SpiceyError:
-        #         logger.warning(f"Could not unload kernel {k} individually. kclear will handle it.")
-
         try:
-            spiceypy.kclear()  # Clears all kernels from SPICE system
+            spiceypy.kclear()
             self._loaded_kernels.clear()
-            logger.info("All SPICE kernels unloaded and pool cleared (kclear).")
+            self.logger.info("All SPICE kernels unloaded and pool cleared (kclear).")
         except spiceypy.utils.exceptions.SpiceyError as e:
-            logger.error(f"SPICE error during kclear: {e}")
+            self.logger.error(f"SPICE error during kclear: {e}")
             raise
 
     def utc_to_et(self, utc_time_str: str) -> float:
-        """
-        Converts a UTC time string to Ephemeris Time (ET).
-
-        Args:
-            utc_time_str: UTC time string in a format recognizable by SPICE
-                          (e.g., "YYYY-MM-DDTHH:MM:SS.sssZ").
-                          Requires a leap seconds kernel (LSK) to be loaded.
-
-        Returns:
-            The Ephemeris Time (TDB) as a float.
-
-        Raises:
-            spiceypy.utils.exceptions.SpiceyError: If SPICE encounters an error
-                                                 (e.g., LSK not loaded, invalid time format).
-        """
         try:
             et = spiceypy.utc2et(utc_time_str)
-            logger.debug(f"Converted UTC '{utc_time_str}' to ET {et}.")
+            self.logger.debug(f"Converted UTC '{utc_time_str}' to ET {et}.")
             return et
         except spiceypy.utils.exceptions.SpiceyError as e:
-            logger.error(f"SPICE error converting UTC '{utc_time_str}' to ET: {e}")
+            self.logger.error(f"SPICE error converting UTC '{utc_time_str}' to ET: {e}")
             raise
 
     def et_to_utc(self, et: float, time_format: str = "ISOC", precision: int = 3) -> str:
-        """
-        Converts an Ephemeris Time (ET) to a UTC time string.
-
-        Args:
-            et: Ephemeris Time (TDB) as a float.
-            time_format: The desired format of the output UTC string.
-                         Common formats: "ISOC" (ISO_FORMAT), "CALFMT", "JULIAN".
-                         Refer to SPICE documentation for et2utc_ for more formats.
-            precision: The number of decimal places for the seconds component (if applicable).
-                       Requires a leap seconds kernel (LSK) to be loaded.
-        Returns:
-            The UTC time string.
-
-        Raises:
-            spiceypy.utils.exceptions.SpiceyError: If SPICE encounters an error.
-        """
         try:
             utc_str = spiceypy.et2utc(et, time_format, precision)
-            logger.debug(f"Converted ET {et} to UTC '{utc_str}' (Format: {time_format}, Precision: {precision}).")
+            self.logger.debug(f"Converted ET {et} to UTC '{utc_str}' (Format: {time_format}, Precision: {precision}).")
             return utc_str
         except spiceypy.utils.exceptions.SpiceyError as e:
-            logger.error(f"SPICE error converting ET {et} to UTC: {e}")
+            self.logger.error(f"SPICE error converting ET {et} to UTC: {e}")
             raise
 
-    def get_body_position(self,
-                          target: str,
-                          et: float,
-                          frame: str,
-                          observer: str,
-                          aberration_correction: str = 'NONE'
-                          ) -> Tuple[np.ndarray, float]:
-        """
-        Retrieves the position of a target body relative to an observing body.
-
-        Args:
-            target: Name or ID of the target body (e.g., "SUN", "EARTH", "MOON", "-901" for a spacecraft).
-            et: Ephemeris Time (TDB) at which to get the position.
-            frame: The reference frame in which the position is to be expressed (e.g., "J2000", "IAU_EARTH").
-            observer: Name or ID of the observing body (e.g., "EARTH", "399").
-            aberration_correction: Aberration correction flag (e.g., "NONE", "LT", "LT+S").
-                                   Requires appropriate SPK kernels to be loaded.
-        Returns:
-            A tuple containing:
-                - position_vector (np.ndarray): 3D position vector (x, y, z) in km.
-                - light_time (float): One-way light time in seconds.
-
-        Raises:
-            spiceypy.utils.exceptions.SpiceyError: If SPICE encounters an error
-                                                 (e.g., kernels not loaded, unknown body/frame).
-        """
+    def get_body_position(self, target: str, et: float, frame: str, observer: str,
+                          aberration_correction: str = 'NONE') -> Tuple[np.ndarray, float]:
         try:
-            position_vector, light_time = spiceypy.spkpos(
-                targ=target,
-                et=et,
-                ref=frame,
-                abcorr=aberration_correction,
-                obs=observer
-            )
-            logger.debug(
-                f"Position of '{target}' relative to '{observer}' in '{frame}' at ET {et} "
-                f"(abcorr: '{aberration_correction}'): {position_vector}, LT: {light_time}s."
-            )
+            target_str = str(target)
+            observer_str = str(observer)
+            position_vector, light_time = spiceypy.spkpos(targ=target_str, et=et, ref=frame,
+                                                          abcorr=aberration_correction, obs=observer_str)
+            self.logger.debug(
+                f"Position of '{target_str}' relative to '{observer_str}' in '{frame}' at ET {et} (abcorr: '{aberration_correction}'): {position_vector}, LT: {light_time}s.")
             return np.array(position_vector), light_time
         except spiceypy.utils.exceptions.SpiceyError as e:
-            logger.error(
-                f"SPICE error getting position for target='{target}', observer='{observer}', "
-                f"frame='{frame}', et={et}: {e}"
-            )
+            self.logger.error(
+                f"SPICE error getting position for target='{target}', observer='{observer}', frame='{frame}', et={et}: {e}")
             raise
 
-    def get_target_orientation(self,
-                               from_frame: str,
-                               to_frame: str,
-                               et: float
-                               ) -> np.ndarray:
-        """
-        Retrieves the 3x3 rotation matrix that transforms vectors from one
-        reference frame to another at a specified ephemeris time.
-
-        This is typically used to get the orientation of a body-fixed frame
-        (e.g., a spacecraft's CK frame) relative to an inertial frame (e.g., J2000).
-
-        Args:
-            from_frame: The name of the frame to transform from (e.g., "J2000").
-            to_frame: The name of the frame to transform to (e.g., "IAU_MARS", a spacecraft CK frame ID).
-            et: Ephemeris Time (TDB) at which the transformation is desired.
-                Requires appropriate FK, PCK, CK, SCLK kernels to be loaded.
-
-        Returns:
-            np.ndarray: A 3x3 rotation matrix. If `r_matrix` is this matrix, then a vector `v_from`
-                        in `from_frame` can be transformed to `v_to` in `to_frame` by:
-                        `v_to = r_matrix @ v_from` (if using NumPy for matrix multiplication).
-                        Note: SPICE's pxform gives from_frame -> to_frame. If you need to_frame -> from_frame, use spiceypy.mxform.
-                        The matrix returned by pxform directly transforms vectors *from* from_frame *to* to_frame.
-                        To transform a vector *in* from_frame *to* a vector *in* to_frame, use spiceypy.pxform.
-                        The matrix returned by spiceypy.pxform(from_frame, to_frame, et) is C_to<-from.
-                        So, vec_to = C_to<-from * vec_from.
-
-        Raises:
-            spiceypy.utils.exceptions.SpiceyError: If SPICE encounters an error.
-        """
+    def get_target_orientation(self, from_frame: str, to_frame: str, et: float) -> np.ndarray:
         try:
+            self.logger.debug(f"Attempting pxform from '{from_frame}' to '{to_frame}' at ET {et}")
             rotation_matrix = spiceypy.pxform(from_frame, to_frame, et)
-            logger.debug(f"Rotation matrix from '{from_frame}' to '{to_frame}' at ET {et} obtained.")
+            self.logger.info(f"Successfully obtained rotation matrix from '{from_frame}' to '{to_frame}'.")
             return np.array(rotation_matrix)
         except spiceypy.utils.exceptions.SpiceyError as e:
-            logger.error(
-                f"SPICE error getting orientation matrix for from_frame='{from_frame}', "
-                f"to_frame='{to_frame}', et={et}: {e}"
-            )
+            self.logger.error(
+                f"SPICE error getting orientation matrix for from_frame='{from_frame}', to_frame='{to_frame}', et={et}: {e}")
+            raise
+
+    def get_frame_name_from_id(self, frame_id: int) -> str:
+        """Gets the frame name associated with a given frame ID."""
+        try:
+            frame_name = spiceypy.frmnam(frame_id)
+            if not frame_name:
+                raise ValueError(f"No frame name found for ID {frame_id} by frmnam.")
+            self.logger.debug(f"Frame ID {frame_id} resolved to name '{frame_name}' by frmnam.")
+            return frame_name
+        except spiceypy.utils.exceptions.SpiceyError as e:
+            self.logger.error(f"SPICE error getting frame name for ID {frame_id}: {e}")
+            raise ValueError(f"Could not get frame name for ID {frame_id} due to SPICE error.") from e
+
+    def get_frame_id_from_name(self, frame_name: str) -> int:
+        """Gets the frame ID associated with a given frame name."""
+        try:
+            frame_id = spiceypy.namfrm(frame_name)
+            if frame_id == 0:
+                raise ValueError(f"No frame ID found for name '{frame_name}'.")
+            self.logger.debug(f"Frame name '{frame_name}' resolved to ID {frame_id} by namfrm.")
+            return frame_id
+        except spiceypy.utils.exceptions.SpiceyError as e:
+            self.logger.error(f"SPICE error getting frame ID for name '{frame_name}': {e}")
+            raise ValueError(f"Could not get frame ID for name '{frame_name}' due to SPICE error.") from e
+
+    def get_frame_info_by_id(self, frame_id: int) -> Tuple[str, int, int, List[int]]:
+        """Retrieves frame information using its integer ID."""
+        try:
+            self.logger.debug(f"Calling spiceypy.frinfo with ID: {frame_id}")
+            raw_frinfo_result = spiceypy.frinfo(frame_id)
+
+            self.logger.debug(f"Raw result from spiceypy.frinfo({frame_id}): {raw_frinfo_result}")
+            self.logger.debug(
+                f"Type of raw_frinfo_result: {type(raw_frinfo_result)}, Length: {len(raw_frinfo_result) if isinstance(raw_frinfo_result, tuple) else 'N/A'}")
+
+            frclss_id_list = []
+            frname = ""
+            center = 0
+            frclass = 0
+
+            if isinstance(raw_frinfo_result, tuple):
+                if len(raw_frinfo_result) == 4:
+                    frname, center, frclass, frclss_id_cell = raw_frinfo_result
+                    if isinstance(frclss_id_cell, spiceypy.utils.support_types.SpiceCell):
+                        frclss_id_list = [frclss_id_cell[i] for i in range(spiceypy.card(frclss_id_cell))]
+                    else:
+                        self.logger.warning(
+                            f"frclss_id_cell from frinfo (for ID {frame_id}) is not a SpiceCell, it's a {type(frclss_id_cell)}. Value: {frclss_id_cell}. Treating ClassID as empty.")
+                elif len(raw_frinfo_result) == 3:
+                    frname, center, frclass = raw_frinfo_result
+                    self.logger.warning(
+                        f"spiceypy.frinfo({frame_id}) returned 3 items. Name='{frname}', Center={center}, Class={frclass}. Assuming no ClassID is defined for this frame.")
+                else:
+                    err_msg = f"spiceypy.frinfo({frame_id}) returned an unexpected number of items ({len(raw_frinfo_result)}). Expected 3 or 4. Result: {raw_frinfo_result}"
+                    self.logger.error(err_msg)
+                    raise ValueError(err_msg)
+            else:
+                err_msg = f"spiceypy.frinfo({frame_id}) did not return a tuple. Result: {raw_frinfo_result}"
+                self.logger.error(err_msg)
+                raise ValueError(err_msg)
+
+            self.logger.debug(
+                f"Frame Info for ID {frame_id}: Name='{frname}', Center={center}, Class={frclass}, ClassIDList={frclss_id_list}")
+            return frname, center, frclass, frclss_id_list
+
+        except spiceypy.utils.exceptions.SpiceyError as e:
+            self.logger.error(f"SPICE error getting frame info for ID {frame_id}: {e}")
             raise
 
     def __enter__(self):
-        """Support for context manager protocol."""
-        logger.debug("SpiceHandler context entered.")
+        self.logger.debug("SpiceHandler context entered.")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """
-        Support for context manager protocol.
-        Ensures all kernels are unloaded when the context is exited.
-        """
         self.unload_all_kernels()
-        logger.debug("SpiceHandler context exited, all kernels unloaded.")
+        self.logger.debug("SpiceHandler context exited, all kernels unloaded.")
 
 
+# --- Main execution block for testing ---
 if __name__ == '__main__':
-    # This is a basic example of how to use the SpiceHandler
-    # You'll need to download a generic LSK kernel and place it in a known path.
-    # E.g., from https://naif.jpl.nasa.gov/naif/data_generic.html -> LSK -> naifXXXX.tls
-    # And a generic PCK, e.g., pckXXXXX.tpc
+    if not logging.getLogger().hasHandlers():
+        logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-    # Setup basic logging for the example
-    logging.basicConfig(level=logging.DEBUG,
-                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    main_logger = logging.getLogger(f"{__name__}.__main__")
+    main_logger.info("Running SpiceHandler example with mission kernels.")
 
-    # --- Replace with the actual path to your LSK kernel ---
-    lsk_kernel_path = "path_to_your_kernels/naif0012.tls"
-    # --- Replace with the actual path to your PCK kernel (optional for this basic example but good practice) ---
-    # pck_kernel_path = "path_to_your_kernels/pck00010.tpc"
+    current_script_path = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(current_script_path, '..', '..'))
+    data_dir = os.path.join(project_root, "data", "spice_kernels")
+
+    is901_metakernel_path = os.path.join(data_dir, "missions", "dst-is901", "INTELSAT_901-metakernel.tm")
+
+    # --- NAIF IDs and Frame Info based on user input ---
+    IS901_NAIF_ID_STR = "-126824"
+    OBSERVER_DST_NAIF_ID_STR = "399999"
+
+    USER_IS901_BUS_FRAME_NAME_STR = "IS901_BUS_FRAME"
+    USER_IS901_BUS_FRAME_ID_INT = -999824
+    # --- End of user-provided values ---
+
+    TARGET_ET_FOR_TEST = 6.34169191e+08
+
+    EARTH_NAIF_ID_STR = "399"
+    INERTIAL_FRAME_NAME = "J2000"
 
     try:
-        # Example using context manager
         with SpiceHandler() as sh:
-            # Load a leap seconds kernel (LSK) - REQUIRED for time conversions
+            sh.load_metakernel(is901_metakernel_path)
+            main_logger.info(f"Successfully furnished metakernel: {is901_metakernel_path}")
+
+            test_utc_time_str_from_et = "UNKNOWN_UTC"
             try:
-                sh.load_kernel(lsk_kernel_path)
-                # sh.load_kernel(pck_kernel_path) # Optional for this specific example
-            except FileNotFoundError:
-                logger.error(f"CRITICAL: LSK kernel not found at '{lsk_kernel_path}'. "
-                             "Time conversions will fail. Download it and update the path.")
-                exit()
-            except spiceypy.utils.exceptions.SpiceyError as e:
-                logger.error(f"SPICE error loading initial kernels: {e}")
-                exit()
+                test_utc_time_str_from_et = sh.et_to_utc(TARGET_ET_FOR_TEST, precision=6)
+                main_logger.info(
+                    f"--- Test Time (from user's ET {TARGET_ET_FOR_TEST}): {test_utc_time_str_from_et} ---")
+            except Exception as e:
+                main_logger.error(f"Error converting TARGET_ET_FOR_TEST ({TARGET_ET_FOR_TEST}) to UTC: {e}. Check LSK.")
 
-            # Time conversion example
-            utc_time = "2024-05-20T12:00:00Z"
+            current_et_for_tests = TARGET_ET_FOR_TEST
+
+            main_logger.info(f"--- Testing IS901 Position (ID: '{IS901_NAIF_ID_STR}') ---")
             try:
-                et_time = sh.utc_to_et(utc_time)
-                logger.info(f"UTC: {utc_time} -> ET: {et_time}")
+                pos_vec, light_time_sec = sh.get_body_position(
+                    target=IS901_NAIF_ID_STR, et=current_et_for_tests, frame=INERTIAL_FRAME_NAME,
+                    observer=EARTH_NAIF_ID_STR, aberration_correction="LT+S")
+                main_logger.info(f"IS901 position rel to Earth: {pos_vec} km (LT: {light_time_sec:.6f}s)")
+            except Exception as e:
+                main_logger.error(f"SPICE error getting IS901 position: {e}")
 
-                retrieved_utc = sh.et_to_utc(et_time, "ISOC", 3)
-                logger.info(f"ET: {et_time} -> UTC: {retrieved_utc}")
+            main_logger.info(f"--- Testing DST Observer Position (ID: '{OBSERVER_DST_NAIF_ID_STR}') ---")
+            try:
+                pos_vec_dst, lt_dst = sh.get_body_position(
+                    target=OBSERVER_DST_NAIF_ID_STR, et=current_et_for_tests, frame=INERTIAL_FRAME_NAME,
+                    observer=EARTH_NAIF_ID_STR)
+                main_logger.info(f"DST Observer position rel to Earth: {pos_vec_dst} km (LT: {lt_dst:.6f}s)")
+            except Exception as e:
+                main_logger.error(f"SPICE error getting DST Observer position: {e}")
 
+            # --- Frame and Orientation Test ---
+            main_logger.info(
+                f"--- Testing IS901 Orientation (Frame Name: '{USER_IS901_BUS_FRAME_NAME_STR}', Expected ID: {USER_IS901_BUS_FRAME_ID_INT}) ---")
+            try:
+                # Step 1: Verify the frame name maps to the expected ID
+                resolved_id_from_name = sh.get_frame_id_from_name(USER_IS901_BUS_FRAME_NAME_STR)
+                if resolved_id_from_name == USER_IS901_BUS_FRAME_ID_INT:
+                    main_logger.info(
+                        f"Confirmed: Name '{USER_IS901_BUS_FRAME_NAME_STR}' maps to ID {USER_IS901_BUS_FRAME_ID_INT} via namfrm.")
+                else:
+                    # This case should ideally not happen if FK is correct and USER_IS901_BUS_FRAME_NAME_STR is the defined name for USER_IS901_BUS_FRAME_ID_INT
+                    main_logger.error(
+                        f"CRITICAL MISMATCH: Name '{USER_IS901_BUS_FRAME_NAME_STR}' maps to {resolved_id_from_name}, but expected ID was {USER_IS901_BUS_FRAME_ID_INT}. Check FK definition or script constants.")
+
+                # Step 2: Get frame info using the known ID (for logging/verification)
+                # This also serves as a check that the frame ID is known to frinfo
+                frname_info, center_info, frclass_info, frclss_id_list_info = sh.get_frame_info_by_id(
+                    USER_IS901_BUS_FRAME_ID_INT)
+                main_logger.info(
+                    f"Info for Frame ID {USER_IS901_BUS_FRAME_ID_INT}: Official Name (from frinfo)='{frname_info}', Center={center_info}, Class={frclass_info}, ClassID={frclss_id_list_info}")
+
+                # Step 3: Attempt orientation using the user-provided frame name (USER_IS901_BUS_FRAME_NAME_STR)
+                # We trust this name because we've confirmed it maps to the correct ID via namfrm.
+                main_logger.info(
+                    f"Attempting to get orientation for frame '{USER_IS901_BUS_FRAME_NAME_STR}' relative to '{INERTIAL_FRAME_NAME}'")
+                rot_matrix = sh.get_target_orientation(
+                    from_frame=INERTIAL_FRAME_NAME, to_frame=USER_IS901_BUS_FRAME_NAME_STR, et=current_et_for_tests)
+                main_logger.info(f"IS901 Bus ('{USER_IS901_BUS_FRAME_NAME_STR}') orientation matrix:\n{rot_matrix}")
+
+            except ValueError as e:
+                main_logger.error(
+                    f"Frame setup error for '{USER_IS901_BUS_FRAME_NAME_STR}' (ID: {USER_IS901_BUS_FRAME_ID_INT}): {e}.")
             except spiceypy.utils.exceptions.SpiceyError as e:
-                logger.error(f"Error during time conversion example: {e}")
-                # This usually means LSK is not loaded or SPICE doesn't know about it.
+                main_logger.error(
+                    f"SPICE error during frame processing or orientation for '{USER_IS901_BUS_FRAME_NAME_STR}' (ID: {USER_IS901_BUS_FRAME_ID_INT}): {e}")
 
-            # Ephemeris example (requires SPK kernels for Sun and Earth, e.g., de430.bsp or similar)
-            # For this example to run, you'd need to load an SPK.
-            # sh.load_kernel("path_to_your_spk/de430.bsp")
-            # try:
-            #     sun_pos_wrt_earth, lt = sh.get_body_position(
-            #         target="SUN",
-            #         et=et_time,
-            #         frame="J2000",
-            #         observer="EARTH",
-            #         aberration_correction="LT+S"
-            #     )
-            #     logger.info(f"Position of SUN wrt EARTH at ET {et_time} in J2000: {sun_pos_wrt_earth} km (LT: {lt} s)")
-            # except spiceypy.utils.exceptions.SpiceyError as e:
-            #     logger.warning(f"Could not get Sun position. "
-            #                    "This likely means an SPK kernel (e.g., de430.bsp) is not loaded. Details: {e}")
+        main_logger.info("Exited SpiceHandler context. Kernels unloaded.")
+        # Removed the utc2et call that was here to verify unload, as requested by user.
+        main_logger.info("Kernel unload verification step (previously here) has been removed.")
 
-            logger.info(f"Currently loaded kernels: {sh._loaded_kernels}")
 
-        logger.info("Exited SpiceHandler context. Kernels should be unloaded.")
-        # To verify, try a SPICE command that requires a kernel (it should fail if LSK is unloaded)
-        try:
-            spiceypy.utc2et("2024-01-01T00:00:00Z")
-        except spiceypy.utils.exceptions.SpiceyError as e:
-            logger.info(f"Successfully verified kernel unload (expected error): {e}")
-
+    except FileNotFoundError as e:
+        main_logger.error(f"CRITICAL FILE NOT FOUND during setup: {e}.")
     except Exception as e:
-        logger.exception(f"An unexpected error occurred in the example: {e}")
+        main_logger.exception(f"An unexpected error occurred: {e}")
 
