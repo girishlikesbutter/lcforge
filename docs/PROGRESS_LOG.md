@@ -53,3 +53,43 @@ Significant progress has been made, and "Phase 0: Project Setup & Foundation" as
 Phase 0 is substantially complete. The core functionalities related to SPICE data handling are implemented, debugged, and tested. The project is now well-prepared to proceed with "Phase 1: Satellite Modeling Core" as outlined in the `PROJECT_DEV_PLAN.md`.
 
 ---
+
+---
+
+**Date:** 2025-05-21
+
+**Entry Title:** Phase 1: Satellite Modeling Core - Catch-up Log for Initial Tasks
+
+**Summary:**
+This entry rectifies a missing update in the progress log. Significant work on "Phase 1: Satellite Modeling Core" has been completed following Phase 0. This includes the definition of core data structures for satellite modeling (`Satellite`, `Component`, `Facet`, `BRDFMaterialProperties` in `src/models/model_definitions.py`). Key functionalities for loading 3D mesh files (via `src/utils/mesh_utils.py`) and robust model persistence through YAML serialization/deserialization (via `src/io/model_io.py`) are now in place.
+
+**Detailed Progress on Phase 1 Tasks (referencing `PROJECT_DEV_PLAN.md`):**
+
+1.  **Satellite & Component Definition (`models.model_definitions` module - FR1.1, FR1.2, FR1.4):** **Substantially Complete.**
+    * Core classes `Satellite`, `Component`, `Facet`, and `BRDFMaterialProperties` are defined in `src/models/model_definitions.py`.
+    * These definitions support a component-based architecture, references to mesh files for shadowing, facet definitions for light curve calculations, and assignment of BRDF material properties. This is evidenced by their successful usage and serialization/deserialization in `src/io/model_io.py`.
+
+2.  **Mesh Handling (FR1.1, NFR8.3):** **Complete.**
+    * The `trimesh` library has been integrated for mesh operations.
+    * The module `src/utils/mesh_utils.py` provides the `load_mesh_from_file` function, capable of loading various mesh formats (e.g., STL, OBJ) and extracting basic properties. The utility includes error handling and logging.
+
+3.  **Component Geometry & Hierarchy (FR1.3):** **Initiated.**
+    * The `Component` dataclass (defined in `src/models/model_definitions.py`) includes fields for `relative_position` (as `np.ndarray`) and `relative_orientation` (as `np.quaternion`). This establishes the foundation for defining component positions and orientations relative to the satellite body-fixed frame.
+
+4.  **Model Persistence (FR1.5):** **Complete.**
+    * A YAML-based file format has been designed and implemented for saving and loading complete `Satellite` model definitions.
+    * The `src/io/model_io.py` module contains `save_satellite_to_yaml` and `load_satellite_from_yaml` functions for this purpose.
+    * Custom YAML representers and constructors have been implemented for `numpy.ndarray`, `numpy.quaternion`, and the project's specific model dataclasses (`Satellite`, `Component`, `Facet`, `BRDFMaterialProperties`) to ensure accurate and robust serialization and deserialization.
+    * The implementation in `src/io/model_io.py` includes an example usage section that also serves as a basic verification of the save/load functionality.
+
+**Phase 1 Deliverables Status (Partial - referring to `PROJECT_DEV_PLAN.md`):**
+
+* `models.model_definitions` module: Ability to programmatically define a multi-component satellite: **Achieved.**
+* `articulation.articulator` module: **Not Yet Started.**
+* Ability to save and load satellite model definitions from files: **Achieved.**
+* Comprehensive unit tests for new modeling functionalities: **To Be Done** (though `model_io.py` contains an example/test script).
+
+**Current Overall Status:**
+Phase 1 of the project is actively underway, with several key foundational elements for satellite modeling now successfully implemented. The project can define, represent, load mesh geometry for, and persist satellite models. Future work in this phase will focus on component articulation, deeper integration with kinematics, and the development of thorough unit tests for these modules.
+
+---
