@@ -93,3 +93,60 @@ This entry rectifies a missing update in the progress log. Significant work on "
 Phase 1 of the project is actively underway, with several key foundational elements for satellite modeling now successfully implemented. The project can define, represent, load mesh geometry for, and persist satellite models. Future work in this phase will focus on component articulation, deeper integration with kinematics, and the development of thorough unit tests for these modules.
 
 ---
+---
+
+**Date:** 2025-05-21
+
+**Entry Title:** POC Development: Programmatic Geometry, Kinematics, and Shadowing Analysis Setup
+
+**Summary:**
+Today's session focused on rapidly developing a proof-of-concept (POC) script (`poc_scripts/poc_phase1_geometry_definition.py`) to cover key aspects of satellite geometry definition, visualization, SPICE-based kinematics, and the initial implementation of self-shadowing analysis.
+
+**Detailed Progress on POC Script Development:**
+
+1.  **Programmatic Satellite Geometry Definition (Phase 1):**
+    * Successfully implemented a method for users to define satellite components (e.g., bus, solar panels for IS901) by specifying their conceptual polygonal "faces" (N-gons) via Python lists of 3D vertices in local component frames.
+    * Developed a helper function (`create_triangular_facets_from_conceptual_face`) to perform fan triangulation on these conceptual faces, converting them into a list of `Facet` objects (each representing a triangle with calculated normals and areas).
+    * Utilized the existing `Component` and `Satellite` dataclasses to construct the `is901_satellite_manual` model object, populating components with these triangular facets.
+
+2.  **Trimesh Conversion and Initial Visualization (Phase 1):**
+    * Implemented a function (`component_to_trimesh`) to convert each `Component` object into a `trimesh.Trimesh` mesh. This included an option for conditional subdivision (tested by subdividing the bus but not the solar panels in the final version of the day).
+    * Successfully applied relative transformations (position and orientation) to place component meshes into the satellite's body-fixed frame.
+    * Assembled and visualized the complete satellite model in an initial `trimesh.Scene` (`satellite_scene`), including colored XYZ axes for reference. This visualization was used iteratively to refine the satellite's dimensions and component placements to a satisfactory state.
+    * Functionality to display triangle edges (wireframe) was added to both initial and planned final visualizations for better clarity.
+
+3.  **SPICE Kinematics for Sun Vector (Phase 2):**
+    * Integrated the `SpiceHandler` to dynamically load the `INTELSAT_901-metakernel.tm` using a relative path from the script's location.
+    * For a specified UTC epoch ("2020-02-05T12:00:00"), the script now successfully:
+        * Converts UTC to Ephemeris Time.
+        * Retrieves the Sun's position vector relative to the satellite (using its SPICE ID -126824) in the J2000 inertial frame.
+        * Retrieves the satellite's orientation matrix (J2000 to `IS901_BUS_FRAME`).
+        * Calculates the normalized `sun_direction_in_body_frame`.
+    * This phase involved debugging and correcting several `AttributeError` and `TypeError` issues related to `SpiceHandler` method calls and initialization.
+
+4.  **Shadowing Analysis and Visualization Setup (Phase 3):**
+    * **Core Logic:**
+        * Successfully concatenated all transformed component meshes into a single `full_satellite_trimesh` for global ray tracing.
+        * Created a `trimesh.ray.ray_triangle.RayMeshIntersector` for this unified mesh.
+        * Implemented the primary shadow calculation loop:
+            * Iterates through each triangle of each component.
+            * Performs back-face culling based on the triangle's normal relative to the `sun_direction_in_body_frame`.
+            * For potentially illuminated triangles, it casts a ray from the triangle's centroid (with an adaptive offset based on overall satellite scale) towards the Sun.
+            * Uses the intersector to check for occlusions, including an attempted fix for "surface acne" by checking ray intersection distance (though this did not fully resolve visual artifacts on solar panels in earlier iterations).
+            * Populates a `triangle_shadow_status` dictionary with binary (0.0 for illuminated, 1.0 for shadowed) results.
+    * **Visualization of Shadowed Scene:**
+        * The script sets up a new `shadow_visualization_scene`.
+        * It iterates through components, colors their triangles based on `triangle_shadow_status` (attempting red for shadowed, grey for illuminated), and adds them to this scene.
+        * The final version of the script provided by the user includes logic to add XYZ axes and sun ray indicators (using `trimesh.path.Path3D` as a fallback for `trimesh.creation.arrow`) to this shadow scene.
+        * The script also includes calls to helper functions (`add_xyz_axes_to_scene` and `set_custom_camera_view`) for the shadow scene visualization.
+    * **Output:** The script prints the `triangle_shadow_status` list to the console. The log from the final provided script indicates that the (unsubdivided) solar panels are calculated as fully "Illuminated (0.0)".
+
+**Current Status & Issues at End of Day (May 21, 2025):**
+* Phases 1 and 2 of the POC (geometry definition, initial visualization, SPICE kinematics) are functioning correctly as per the last script version provided.
+* The core shadow calculation logic (Phase 3.2) is in place and successfully populates the `triangle_shadow_status` dictionary. The diagnostic step of not subdividing solar panels resulted in them being calculated as "Illuminated".
+* The main outstanding issue is the visual representation in Phase 3.3:
+    * The user reported that visual artifacts ("red slivers") on solar panels persisted through several attempted fixes (adjusting ray origin epsilon, checking intersection distance). The final script version (where solar panels are not subdivided and calculated as illuminated) needs to be visually checked by the user to confirm if these specific slivers are gone or if another visual issue is present.
+    * The script, as last provided by the user, would encounter a `NameError` for `add_xyz_axes_to_scene` (and `set_custom_camera_view`) and an `AttributeError` for `trimesh.creation.text_to_mesh3d` during the setup of the shadowed scene visualization, because the definitions for these helper functions and a fallback for text creation were not yet part of that script's top-level definitions.
+* The immediate next step for the POC is to ensure a clean execution of the complete Phase 3 shadowed scene visualization by defining any missing helper functions, handling potential `trimesh` function `AttributeErrors` gracefully (e.g., for `text_to_mesh3d` and `arrow`), and then re-evaluating the visual accuracy of the shadowing, particularly on the solar panels.
+
+---
