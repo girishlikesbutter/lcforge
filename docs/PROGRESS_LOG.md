@@ -150,3 +150,50 @@ Today's session focused on rapidly developing a proof-of-concept (POC) script (`
 * The immediate next step for the POC is to ensure a clean execution of the complete Phase 3 shadowed scene visualization by defining any missing helper functions, handling potential `trimesh` function `AttributeErrors` gracefully (e.g., for `text_to_mesh3d` and `arrow`), and then re-evaluating the visual accuracy of the shadowing, particularly on the solar panels.
 
 ---
+
+---
+
+**Date:** 2025-05-22
+
+**Entry Title:** POC Script: Shadowing Logic and Visualization Refinement
+
+**Summary:**
+Today's session was dedicated to intensive debugging and refinement of the self-shadowing calculation and visualization within the `poc_phase1_geometry_definition.py` script. The primary goal was to ensure that the visual representation of shadowed and illuminated faces accurately reflected the underlying calculated shadow status. Key issues addressed included visual artifacts making lit faces appear shadowed, and ensuring the ray-casting logic for self-shadowing was behaving as expected.
+
+**Detailed Progress on POC Script (`poc_phase1_geometry_definition.py`):**
+
+1.  **Visualization Accuracy Resolved:**
+    * Identified that visual artifacts (e.g., "red glow" on front faces) were primarily due to rendering effects (like smooth shading) when differently colored faces (e.g., red back-faces, grey front-faces) were in close proximity.
+    * **Fix:** Implemented `shadow_visualization_scene.show(smooth=False)` to use flat shading, which resolved the misleading color blending and provided a clear, accurate visual representation of the per-face shadow status.
+    * Changed the color for "illuminated" faces to bright green for better contrast against red (shadowed) and yellow (ignored self-hit) during debugging.
+
+2.  **Shadow Calculation Logic - Back-Face Handling:**
+    * Modified the logic to correctly classify triangles facing away from the sun (based on dot product of their normal and the sun vector) as directly "shadowed" (status `1.0`). These faces do not cast further rays for self-shadowing.
+
+3.  **Shadow Calculation Logic - Ray Casting for Front-Faces:**
+    * Addressed an issue where "NO HITS" were being reported for rays cast from front-facing triangles, even when self-occlusion was expected.
+    * Systematically debugged ray casting parameters:
+        * Adjusted `epsilon_offset_val` (for ray origin) to `effective_scale * 1e-3` to provide a more robust offset from the surface.
+        * Refined `min_occlusion_dist` to `epsilon_offset_val * 5.0` to better distinguish true occlusions from self-hits.
+    * Corrected the `comp_rays_cast_count` statistic to ensure it only counted rays cast from truly front-facing triangles.
+    * Ensured Trimesh objects were correctly processed using `mesh.process()` after initial creation and before `fix_normals` and `merge_vertices`.
+    * Temporarily simplified the intersector mesh to include only the bus to isolate self-shadowing behavior, then reverted to using all components.
+
+4.  **Subdivision and Intersector:**
+    * Re-enabled subdivision for the bus geometry (`SUBDIVIDE_BUS_GEOMETRY = True`).
+    * Ensured the `RayMeshIntersector` uses the complete satellite model (all components) for intersection tests.
+
+5.  **Code Tidiness:**
+    * Removed most of the highly verbose debugging `print` statements from the script.
+    * Retained essential status messages, per-component shadow calculation statistics, and the final overall shadow status summary to maintain clarity on the script's operation.
+
+**Current Status & Next Steps for POC:**
+* The `poc_phase1_geometry_definition.py` script now correctly:
+    * Defines satellite geometry.
+    * Obtains kinematic data from SPICE.
+    * Marks back-facing triangles as shadowed.
+    * Casts rays for front-facing triangles to detect occlusions.
+    * Visualizes the shadow status accurately using flat shading and distinct colors.
+* The immediate next step for the POC is to further refine the self-shadowing logic for front-facing triangles to correctly identify and mark occlusions caused by other parts of the satellite (e.g., bus shadowing parts of itself, or solar panels shadowing the bus, if applicable by geometry and sun angle). The "Cast Rays with NO Hits" for front-facing bus triangles (when the intersector is the bus itself) needs to be resolved to achieve true self-shadowing.
+
+---
