@@ -13,3 +13,5 @@ trimesh
 pyyaml
 pyglet==1.5.27
 rtree
+imageio==2.37.0
+pillow==11.2.1
